@@ -1,0 +1,147 @@
+---
+title: "Food Consumption and CO2 Emissions"
+author: "Jen Ren"
+date: "2020-02-18"
+output: github_document
+---
+
+(Caveat: I think I missed the beginning where there might have been instructions to create viz... sorry! I instead spent the time doing some EDA without viz.)
+
+Import time and let's ingest our data!
+
+```{r}
+library(tidyverse)
+library(countrycode)
+```
+
+```{r}
+food_consumption <- 
+  readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-18/food_consumption.csv') %>% 
+  rename(co2_emission = co2_emmission)
+```
+
+```{r}
+food_consumption %>% 
+  group_by(country) %>% 
+  summarize(total_co2_emission = sum(co2_emission)) %>% 
+  ungroup() %>% 
+  arrange(desc(total_co2_emission))
+```
+
+Whoa, I totally didn't expect Argentina to have such a high CO2 emission amount per capita; we normally hear about the US as having a high CO2 emission per capita, but perhaps this is because it's from other factors like transportation (i.e. people here drive a lot). Looking at the top 5, I suspect that it's mostly because of high meat consumption. 
+
+Okay, great. Now what I'm interested in is validating whether it's primarily driven through meat (specifically, beef). Let's take a look at what categories of food there are:
+
+```{r}
+food_consumption %>% 
+  distinct(food_category)
+```
+
+A baseline assumption is that the CO2 emission per capita is directly proportional to the per capita consumption of that food category, and that rate is consistent between countries. To test our assumptions, let's see whether the rate varies significantly enough based on the difference between max and min rates:
+
+```{r}
+food_consumption %>% 
+  mutate(emissions_per_kg_consumed = co2_emission / consumption) %>% 
+  group_by(food_category) %>% 
+  filter(abs(max(emissions_per_kg_consumed) - min(emissions_per_kg_consumed)) > 0.01) %>% 
+  summarize(max(emissions_per_kg_consumed), min(emissions_per_kg_consumed)) %>% 
+  ungroup()
+```
+
+Unfortunately it looks like there is some variance, though it seems small enough to hold our assumption for practical purposes. Let's continue with our assumption and keep exploring!
+
+Let's see what people consume the most of, by country:
+
+```{r}
+food_consumption %>% 
+  group_by(country) %>% 
+  arrange(desc(co2_emission)) %>% 
+  top_n(1) %>% 
+  ungroup()
+```
+
+Glancing at the data, it looks like most of it is driven by beef. How many countries of the 130 have their primary food category that contributes the most CO2 emissions *not* as beef?
+
+```{r}
+food_consumption %>% 
+  group_by(country) %>% 
+  arrange(desc(co2_emission)) %>% 
+  top_n(1) %>% 
+  ungroup() %>% 
+  filter(food_category != "Beef")
+```
+
+Looks like only 35 countries! Most of them have fairly low emissions except for Iceland and Finland. 
+
+Let's see if there are trends among continents. Let's join it to the gapminder dataset, but since it's only available until 2007, we'll take the latest data from gapminder:
+
+```{r}
+gapminder_2007 <- gapminder %>% filter(year == 2007)
+```
+
+```{r}
+food_consumption %>% 
+  left_join(gapminder_2007, by = "country") %>% 
+  filter(is.na(continent)) %>% 
+  distinct(country)
+```
+
+```{r}
+df_1 <- 
+  food_consumption %>% 
+    mutate(
+      continent = countrycode(
+        food_consumption$country, 
+        origin = "country.name", 
+        destination = "continent"
+      )
+    )
+
+df_1
+```
+
+
+Let's see what the mean CO2 emissions per capita is by food category within continents. 
+
+```{r}
+df_1 %>%
+  group_by(continent, food_category) %>% 
+  summarize(total_emissions = mean(co2_emission))
+```
+
+Let's see what food category contributes the most CO2 emissions in each continent:
+
+```{r}
+df_1 %>%
+  group_by(continent, food_category) %>% 
+  summarize(total_emissions = mean(co2_emission)) %>% 
+  ungroup() %>% 
+  group_by(continent) %>% 
+  filter(total_emissions == max(total_emissions)) %>% 
+  ungroup()
+```
+
+No surprise; it's beef! What is shocking is how widely varied it is, which means (based on our validated assumption) that consumption rates also vary widely across continents! Why is Oceania's so high? 
+
+```{r}
+df_1 %>% 
+  filter(continent == "Oceania") %>% 
+  arrange(desc(co2_emission))
+```
+
+Random thought: I wonder whether people's average consumption volume varies widely from country to country, irrespective of CO2 emissions? Basically, do people on average eat about the same total mass of food (and the makeup just changes)? Or do some countries' people tend to eat a larger volume of food too?
+
+```{r}
+df_2 <-
+  food_consumption %>% 
+    group_by(country) %>% 
+    summarize(total_consumption = sum(consumption)) %>% 
+    ungroup() %>% 
+    arrange(desc(total_consumption))
+
+df_2
+```
+
+WHAT. I totally assumed that the US was going to be number one in terms of sheer amount of food consumed per person, but it turns out it's actually Finland? And by a significant margin of `df_2[df_2$country == "Finland", "total_consumption"] - df_2[df_2$country == "USA", "total_consumption"]` (about 148 kg, nearly 326 lbs!)
+
+
